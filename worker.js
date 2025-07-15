@@ -70,6 +70,41 @@ const API_FORMATS = {
 async function handleRequest(request) {
     try {
         if (request.method !== 'POST') {
+            // 添加对根路由的GET请求处理
+            if (request.method === 'GET') {
+                const url = new URL(request.url)
+                if (url.pathname === '/') {
+                    return new Response(JSON.stringify({
+                        name: "API格式转换服务",
+                        description: "这是一个通用的AI API格式转换服务，支持在不同AI平台之间进行API格式转换",
+                        version: "1.0.0",
+                        supported_platforms: ["openai", "claude", "gemini", "openrouter"],
+                        usage: {
+                            endpoint: "/{source_platform}/{target_platform}",
+                            method: "POST",
+                            description: "将源平台的API格式转换为目标平台的格式",
+                            example: "/openai/claude - 将OpenAI格式转换为Claude格式"
+                        },
+                        features: [
+                            "自动检测源API格式",
+                            "支持多种认证方式",
+                            "模型名称映射（OpenRouter）",
+                            "请求和响应格式转换",
+                            "跨域支持"
+                        ],
+                        authentication: {
+                            methods: ["Authorization Bearer", "x-api-key", "x-goog-api-key", "URL参数key"],
+                            note: "根据目标平台自动选择合适的认证方式"
+                        }
+                    }), {
+                        status: 200,
+                        headers: {
+                            'Content-Type': 'application/json; charset=utf-8',
+                            'Access-Control-Allow-Origin': '*'
+                        }
+                    })
+                }
+            }
             return new Response('Method Not Allowed', { status: 405 })
         }
 
