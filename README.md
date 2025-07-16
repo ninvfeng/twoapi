@@ -68,12 +68,15 @@ curl -X POST "https://your-worker.com/groq/openai" \
   -H "Authorization: Bearer YOUR_GROQ_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "llama-3-70b",
+    "model": "llama-3-70b-8192",
     "messages": [
       {"role": "user", "content": "Hello"}
-    ]
+    ],
+    "max_tokens": 1000
   }'
 ```
+
+**注意**: Groq 平台对 `max_tokens` 有限制，不能超过 16384。服务会自动将超过限制的值调整为 16384。
 
 ### 使用OpenRouter平台，返回Gemini格式
 ```bash
@@ -88,15 +91,44 @@ curl -X POST "https://your-worker.com/openrouter/gemini" \
   }'
 ```
 
-## 模型映射
+## 平台特殊处理
 
-OpenRouter平台支持模型映射，自动将简单模型名转换为完整标识符：
+### Groq 平台限制
+
+Groq 平台对 `max_tokens` 参数有严格限制：
+
+- **最大值**: 16384
+- **自动调整**: 如果请求的 `max_tokens` 超过 16384，服务会自动调整为 16384
+- **默认值**: 如果未设置 `max_tokens`，使用默认值 2048
+
+```bash
+# 示例：超过限制的值会被自动调整
+curl -X POST "https://your-worker.com/groq/openai" \
+  -H "Authorization: Bearer YOUR_GROQ_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama-3-70b-8192",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "max_tokens": 20000
+  }'
+# 实际发送给 Groq 的 max_tokens 值为 16384
+```
+
+### 模型映射
+
+OpenRouter和Groq平台支持模型映射，自动将简单模型名转换为完整标识符：
 
 ```javascript
-// 配置示例
+// OpenRouter 配置示例
 modelMappings: {
-    'anthropic-sonnet-4': 'moonshotai/kimi-k2:free',
+    'claude-sonnet-4': 'moonshotai/kimi-k2:free',
     // 添加更多映射...
+}
+
+// Groq 配置示例
+modelMappings: {
+    'claude-sonnet-4': 'moonshotai/kimi-k2-instruct',
+    'claude-opus-4-20250514': 'moonshotai/kimi-k2-instruct'
 }
 ```
 

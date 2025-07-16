@@ -177,8 +177,18 @@ async function handleRequest(request) {
 
         // 如果平台格式和客户端格式相同，直接转发
         if (platformFormat === clientFormat) {
-            // 对于 OpenRouter 平台，即使格式相同也需要处理 cache_control
+            // 对于特定平台，即使格式相同也需要特殊处理
             let finalRequestBody = requestBody
+            
+            // 对于 groq 平台，限制 max_tokens 不超过 16384
+            if (platform === 'groq') {
+                finalRequestBody = { ...requestBody }
+                if (finalRequestBody.max_tokens && finalRequestBody.max_tokens > 16384) {
+                    finalRequestBody.max_tokens = 16384
+                }
+            }
+            
+            // 对于 OpenRouter 平台，处理 cache_control
             if (platform === 'openrouter') {
                 // 清理所有消息中的 cache_control（无论是否为 Claude 模型）
                 finalRequestBody = { ...requestBody }
@@ -508,6 +518,12 @@ function fromStandardFormat(standard, targetFormat, originalRequest = null, plat
                 max_tokens: standard.max_tokens,
                 temperature: standard.temperature,
                 stream: standard.stream
+            }
+            
+            // 对于 groq 平台，限制 max_tokens 不超过 16384
+            if (platform === 'groq') {
+                // groq 平台的 max_tokens 限制为 16384
+                openaiRequest.max_tokens = Math.min(openaiRequest.max_tokens, 16384)
             }
             
             // 对于 OpenRouter 平台，根据模型类型处理 cache_control

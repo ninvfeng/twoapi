@@ -52,12 +52,17 @@ wrangler dev
 ### 测试脚本
 - `test/openrouter.sh` - OpenRouter 平台测试
 - `test/openrouter_prdt.sh` - 生产环境测试
+- `test/groq.sh` - Groq 平台测试，包含 max_tokens 限制测试
 
 ### 测试命令
 ```bash
-# 运行测试
+# 运行 OpenRouter 测试
 chmod +x test/openrouter.sh
 ./test/openrouter.sh
+
+# 运行 Groq 测试（包含 max_tokens 限制测试）
+chmod +x test/groq.sh
+./test/groq.sh
 ```
 
 ## 部署
@@ -91,10 +96,15 @@ wrangler publish
 
 ## 编码指南
 
+### 平台特殊处理
+- **Groq 平台**: 自动限制 `max_tokens` 不超过 16384
+- **OpenRouter 平台**: 智能处理 Claude 模型的 `cache_control` 参数
+
 ### 新增平台支持
 1. 在 `API_FORMATS` 中添加平台配置
 2. 实现相应的格式转换函数
-3. 更新文档和测试
+3. 如果平台有特殊限制，在直接转发和格式转换两个地方都要处理
+4. 更新文档和测试
 
 ### 新增格式支持
 1. 实现格式转换函数 (`convertToXXX` 和 `convertFromXXX`)
