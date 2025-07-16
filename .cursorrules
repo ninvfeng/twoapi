@@ -18,8 +18,8 @@
 
 ## 支持的平台和格式
 
-**平台**: `openai`, `claude`, `gemini`, `openrouter`, `groq`
-**格式**: `openai`, `claude`, `gemini`
+**平台**: `openai`, `anthropic`, `gemini`, `openrouter`, `groq`
+**格式**: `openai`, `anthropic`, `gemini`
 
 ## 开发规范
 

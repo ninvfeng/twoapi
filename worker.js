@@ -13,7 +13,7 @@ const API_FORMATS = {
         endpoint: '/v1/chat/completions',
         format: 'openai'
     },
-    claude: {
+    anthropic: {
         baseUrl: 'https://api.anthropic.com',
         headers: {
             'x-api-key': '{token}',
@@ -21,7 +21,7 @@ const API_FORMATS = {
             'Content-Type': 'application/json'
         },
         endpoint: '/v1/messages',
-        format: 'claude'
+        format: 'anthropic'
     },
     gemini: {
         baseUrl: 'https://generativelanguage.googleapis.com',
@@ -88,13 +88,13 @@ async function handleRequest(request) {
                         name: "API格式转换服务",
                         description: "这是一个通用的AI API格式转换服务，支持在不同AI平台之间进行API格式转换",
                         version: "1.0.0",
-                        supported_platforms: ["openai", "claude", "gemini", "openrouter", "groq"],
-                        supported_formats: ["openai", "claude", "gemini"],
+                        supported_platforms: ["openai", "anthropic", "gemini", "openrouter", "groq"],
+                        supported_formats: ["openai", "anthropic", "gemini"],
                         usage: {
                             endpoint: "/{platform}/{client_format}",
                             method: "POST",
                             description: "将客户端格式转换为平台格式，或直接转发（如果格式相同）",
-                            example: "/openai/claude - 使用OpenAI平台，返回Claude格式"
+                            example: "/openai/anthropic - 使用OpenAI平台，返回Claude格式"
                         },
                         features: [
                             "平台和格式分离设计",
@@ -138,7 +138,7 @@ async function handleRequest(request) {
         }
 
         // 验证客户端格式是否支持
-        const supportedFormats = ['openai', 'claude', 'gemini']
+        const supportedFormats = ['openai', 'anthropic', 'gemini']
         if (!supportedFormats.includes(clientFormat)) {
             return new Response('Unsupported client format', { status: 400 })
         }
@@ -397,7 +397,7 @@ function toStandardFormat(request, sourceFormat) {
             standard.stream = request.stream || false
             break
 
-        case 'claude':
+        case 'anthropic':
             standard.messages = request.messages || []
             standard.model = request.model || ''
             standard.max_tokens = request.max_tokens || 2048
@@ -449,8 +449,8 @@ function fromStandardFormat(standard, targetFormat) {
                 stream: standard.stream
             }
 
-        case 'claude':
-            const claudeRequest = {
+        case 'anthropic':
+            const anthropicRequest = {
                 model: standard.model,
                 messages: standard.messages,
                 max_tokens: standard.max_tokens,
@@ -460,17 +460,17 @@ function fromStandardFormat(standard, targetFormat) {
             
             // 处理系统消息
             if (standard.system) {
-                claudeRequest.system = standard.system
+                anthropicRequest.system = standard.system
             } else {
                 // 如果有系统消息在messages中，提取出来
                 const systemMessage = standard.messages.find(msg => msg.role === 'system')
                 if (systemMessage) {
-                    claudeRequest.system = systemMessage.content
-                    claudeRequest.messages = standard.messages.filter(msg => msg.role !== 'system')
+                    anthropicRequest.system = systemMessage.content
+                    anthropicRequest.messages = standard.messages.filter(msg => msg.role !== 'system')
                 }
             }
             
-            return claudeRequest
+            return anthropicRequest
 
         case 'gemini':
             const contents = standard.messages.map(msg => ({
@@ -531,7 +531,7 @@ function responseToStandardFormat(response, sourceFormat) {
         case 'openrouter':
             return response // OpenAI格式就是标准格式
 
-        case 'claude':
+        case 'anthropic':
             standard.id = response.id || ''
             standard.model = response.model || ''
             standard.choices = [{
@@ -582,7 +582,7 @@ function responseFromStandardFormat(standard, targetFormat) {
         case 'openrouter':
             return standard
 
-        case 'claude':
+        case 'anthropic':
             const choice = standard.choices[0]
             return {
                 id: standard.id,
@@ -777,7 +777,7 @@ function streamChunkToStandardFormat(chunk, sourceFormat) {
         case 'openrouter':
             return chunk // OpenAI 格式就是标准格式
             
-        case 'claude':
+        case 'anthropic':
             // Claude 流式格式转换
             if (chunk.type === 'content_block_delta') {
                 standard.choices = [{
@@ -826,7 +826,7 @@ function streamChunkFromStandardFormat(standard, targetFormat) {
         case 'openrouter':
             return standard
             
-        case 'claude':
+        case 'anthropic':
             const choice = standard.choices[0]
             if (choice?.delta?.content) {
                 return {

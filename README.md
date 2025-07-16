@@ -4,8 +4,8 @@
 
 ## 支持的平台和格式
 
-**平台**: `openai`, `claude`, `gemini`, `openrouter`, `groq`  
-**格式**: `openai`, `claude`, `gemini`
+**平台**: `openai`, `anthropic`, `gemini`, `openrouter`, `groq`  
+**格式**: `openai`, `anthropic`, `gemini`
 
 ## 核心用法
 
@@ -21,7 +21,7 @@ POST /{platform}/{client_format}
 
 ### 使用OpenAI平台，返回Claude格式
 ```bash
-curl -X POST "https://your-worker.com/openai/claude" \
+curl -X POST "https://your-worker.com/openai/anthropic" \
   -H "Authorization: Bearer YOUR_OPENAI_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -52,7 +52,7 @@ curl -X POST "https://your-worker.com/openrouter/gemini" \
   -H "Authorization: Bearer YOUR_OPENROUTER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "claude-sonnet-4",
+    "model": "anthropic-sonnet-4",
     "messages": [
       {"role": "user", "content": "Hello"}
     ]
@@ -66,7 +66,7 @@ OpenRouter平台支持模型映射，自动将简单模型名转换为完整标�
 ```javascript
 // 配置示例
 modelMappings: {
-    'claude-sonnet-4': 'moonshotai/kimi-k2:free',
+    'anthropic-sonnet-4': 'moonshotai/kimi-k2:free',
     // 添加更多映射...
 }
 ```
@@ -87,7 +87,7 @@ modelMappings: {
 
 ```bash
 # OpenRouter 平台，返回 Claude 格式的流式响应
-curl -X POST "https://your-worker.com/openrouter/claude" \
+curl -X POST "https://your-worker.com/openrouter/anthropic" \
   -H "Authorization: Bearer YOUR_OPENROUTER_TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
