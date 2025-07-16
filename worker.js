@@ -140,6 +140,8 @@ async function handleRequest(request) {
         if (!authToken) {
             return new Response('Missing authentication token', { status: 401 })
         }
+        
+        // 认证和格式验证完成
 
         // 如果平台格式和客户端格式相同，直接转发
         if (platformFormat === clientFormat) {
@@ -147,6 +149,8 @@ async function handleRequest(request) {
             const targetConfig = API_FORMATS[platform]
             const targetUrl = buildTargetUrl(targetConfig, requestBody.model, platformFormat)
             const targetHeaders = buildTargetHeaders(targetConfig, authToken, platformFormat)
+            
+            // 发送请求到目标平台
 
             const response = await fetch(targetUrl, {
                 method: 'POST',
@@ -252,7 +256,8 @@ function extractAuthToken(request, platformFormat) {
     const urlKey = new URL(request.url).searchParams.get('key')
     
     if (authHeader) {
-        return authHeader.replace('Bearer ', '')
+        // 移除Bearer前缀（如果存在）
+        return authHeader.startsWith('Bearer ') ? authHeader.substring(7) : authHeader
     }
     
     if (apiKey) {
@@ -304,6 +309,9 @@ function buildTargetHeaders(config, token, format) {
             } else {
                 headers[key] = token
             }
+        } else if (value.includes('{token}')) {
+            // 替换 {token} 占位符
+            headers[key] = value.replace('{token}', token)
         } else if (format === 'gemini' && key === 'x-goog-api-key') {
             headers[key] = token
         } else {
