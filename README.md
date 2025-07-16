@@ -76,6 +76,35 @@ modelMappings: {
 1. **格式相同**: 直接转发请求到目标平台
 2. **格式不同**: 客户端格式 → 平台格式 → 平台API → 客户端格式
 
+## 流式响应支持
+
+服务支持流式响应（Server-Sent Events），包括：
+
+- **直接转发**: 当平台格式与客户端格式相同时，直接转发流式响应
+- **格式转换**: 当需要格式转换时，实时解析和转换流式数据块
+
+### 流式格式转换示例
+
+```bash
+# OpenRouter 平台，返回 Claude 格式的流式响应
+curl -X POST "https://your-worker.com/openrouter/claude" \
+  -H "Authorization: Bearer YOUR_OPENROUTER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  --no-buffer \
+  -d '{
+    "model": "your-model",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true
+  }'
+```
+
+### 支持的流式格式转换
+
+- **OpenAI ↔ Claude**: 双向流式格式转换
+- **OpenAI ↔ Gemini**: 双向流式格式转换  
+- **Claude ↔ Gemini**: 双向流式格式转换
+
 ## 部署
 
 ### Cloudflare Workers

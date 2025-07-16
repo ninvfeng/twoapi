@@ -66,6 +66,19 @@ const API_FORMATS = {
  */
 async function handleRequest(request) {
     try {
+        // 处理 CORS 预检请求
+        if (request.method === 'OPTIONS') {
+            return new Response(null, {
+                status: 200,
+                headers: {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept, x-api-key, x-goog-api-key',
+                    'Access-Control-Max-Age': '86400'
+                }
+            })
+        }
+
         if (request.method !== 'POST') {
             // 添加对根路由的GET请求处理
             if (request.method === 'GET') {
@@ -89,7 +102,8 @@ async function handleRequest(request) {
                             "支持多种认证方式",
                             "模型名称映射（部分平台）",
                             "请求和响应格式转换",
-                            "跨域支持"
+                            "跨域支持",
+                            "流式响应支持"
                         ],
                         authentication: {
                             methods: ["Authorization Bearer", "x-api-key", "x-goog-api-key", "URL参数key"],
@@ -151,7 +165,6 @@ async function handleRequest(request) {
             const targetHeaders = buildTargetHeaders(targetConfig, authToken, platformFormat)
             
             // 发送请求到目标平台
-
             const response = await fetch(targetUrl, {
                 method: 'POST',
                 headers: targetHeaders,
@@ -162,6 +175,22 @@ async function handleRequest(request) {
                 const errorText = await response.text()
                 return new Response(`Platform API Error: ${errorText}`, { 
                     status: response.status 
+                })
+            }
+
+            // 检查是否为流式响应
+            if (requestBody.stream) {
+                // 对于流式响应，直接转发响应流
+                return new Response(response.body, {
+                    status: response.status,
+                    headers: {
+                        'Content-Type': 'text/event-stream',
+                        'Cache-Control': 'no-cache',
+                        'Connection': 'keep-alive',
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+                        'Access-Control-Allow-Methods': 'POST, OPTIONS'
+                    }
                 })
             }
 
@@ -200,6 +229,12 @@ async function handleRequest(request) {
             return new Response(`Platform API Error: ${errorText}`, { 
                 status: response.status 
             })
+        }
+
+        // 检查是否为流式响应
+        if (mappedRequest.stream) {
+            // 对于流式响应且需要格式转换的情况
+            return await handleStreamResponse(response, platformFormat, clientFormat)
         }
 
         // 5. 转换响应格式
@@ -583,4 +618,250 @@ function responseFromStandardFormat(standard, targetFormat) {
         default:
             return standard
     }
+}
+
+/**
+ * 处理流式响应并进行格式转换
+ * @param {Response} response - 原始流式响应
+ * @param {string} sourceFormat - 源格式
+ * @param {string} targetFormat - 目标格式
+ * @returns {Response} - 转换后的流式响应
+ */
+async function handleStreamResponse(response, sourceFormat, targetFormat) {
+    const { readable, writable } = new TransformStream()
+    
+    // 异步处理流式数据
+    processStreamData(response.body, writable.getWriter(), sourceFormat, targetFormat)
+    
+    return new Response(readable, {
+        status: response.status,
+        headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Allow-Methods': 'POST, OPTIONS'
+        }
+    })
+}
+
+/**
+ * 处理流式数据转换
+ * @param {ReadableStream} inputStream - 输入流
+ * @param {WritableStreamDefaultWriter} writer - 输出写入器
+ * @param {string} sourceFormat - 源格式
+ * @param {string} targetFormat - 目标格式
+ */
+async function processStreamData(inputStream, writer, sourceFormat, targetFormat) {
+    const reader = inputStream.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    
+    try {
+        while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            
+            buffer += decoder.decode(value, { stream: true })
+            
+            // 按行处理数据
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || '' // 保留最后一行（可能不完整）
+            
+            for (const line of lines) {
+                await processStreamLine(line, writer, sourceFormat, targetFormat)
+            }
+        }
+        
+        // 处理剩余的缓冲区数据
+        if (buffer) {
+            await processStreamLine(buffer, writer, sourceFormat, targetFormat)
+        }
+        
+    } catch (error) {
+        console.error('Stream processing error:', error)
+        await writer.write(new TextEncoder().encode(`data: {"error": "Stream processing error: ${error.message}"}\n\n`))
+    } finally {
+        await writer.close()
+    }
+}
+
+/**
+ * 处理单行流式数据
+ * @param {string} line - 单行数据
+ * @param {WritableStreamDefaultWriter} writer - 输出写入器
+ * @param {string} sourceFormat - 源格式
+ * @param {string} targetFormat - 目标格式
+ */
+async function processStreamLine(line, writer, sourceFormat, targetFormat) {
+    try {
+        // 空行直接转发
+        if (line.trim() === '') {
+            await writer.write(new TextEncoder().encode('\n'))
+            return
+        }
+        
+        // 解析 Server-Sent Events 格式
+        if (line.startsWith('data: ')) {
+            const dataStr = line.substring(6) // 移除 'data: ' 前缀
+            
+            // 跳过特殊消息
+            if (dataStr === '[DONE]' || dataStr.trim() === '') {
+                await writer.write(new TextEncoder().encode(line + '\n\n'))
+                return
+            }
+            
+            try {
+                const data = JSON.parse(dataStr)
+                
+                // 转换数据格式
+                const convertedData = convertStreamChunk(data, sourceFormat, targetFormat)
+                
+                // 写入转换后的数据
+                const outputLine = `data: ${JSON.stringify(convertedData)}\n\n`
+                await writer.write(new TextEncoder().encode(outputLine))
+                
+            } catch (parseError) {
+                // 如果无法解析 JSON，直接转发
+                await writer.write(new TextEncoder().encode(line + '\n\n'))
+            }
+        } else {
+            // 非数据行直接转发（如 event:, id:, retry: 等）
+            await writer.write(new TextEncoder().encode(line + '\n'))
+        }
+        
+    } catch (error) {
+        console.error('Line processing error:', error)
+        await writer.write(new TextEncoder().encode(`data: {"error": "Line processing error: ${error.message}"}\n\n`))
+    }
+}
+
+/**
+ * 转换流式数据块
+ * @param {object} chunk - 原始数据块
+ * @param {string} sourceFormat - 源格式
+ * @param {string} targetFormat - 目标格式
+ * @returns {object} - 转换后的数据块
+ */
+function convertStreamChunk(chunk, sourceFormat, targetFormat) {
+    // 如果格式相同，直接返回
+    if (sourceFormat === targetFormat) {
+        return chunk
+    }
+    
+    // 首先转换为标准格式
+    const standardChunk = streamChunkToStandardFormat(chunk, sourceFormat)
+    
+    // 然后转换为目标格式
+    return streamChunkFromStandardFormat(standardChunk, targetFormat)
+}
+
+/**
+ * 将流式数据块转换为标准格式
+ * @param {object} chunk - 原始数据块
+ * @param {string} sourceFormat - 源格式
+ * @returns {object} - 标准格式数据块
+ */
+function streamChunkToStandardFormat(chunk, sourceFormat) {
+    const standard = {
+        id: chunk.id || '',
+        object: 'chat.completion.chunk',
+        created: chunk.created || Math.floor(Date.now() / 1000),
+        model: chunk.model || '',
+        choices: []
+    }
+    
+    switch (sourceFormat) {
+        case 'openai':
+        case 'openrouter':
+            return chunk // OpenAI 格式就是标准格式
+            
+        case 'claude':
+            // Claude 流式格式转换
+            if (chunk.type === 'content_block_delta') {
+                standard.choices = [{
+                    index: 0,
+                    delta: {
+                        content: chunk.delta?.text || ''
+                    },
+                    finish_reason: null
+                }]
+            } else if (chunk.type === 'message_stop') {
+                standard.choices = [{
+                    index: 0,
+                    delta: {},
+                    finish_reason: 'stop'
+                }]
+            }
+            break
+            
+        case 'gemini':
+            // Gemini 流式格式转换
+            if (chunk.candidates && chunk.candidates.length > 0) {
+                const candidate = chunk.candidates[0]
+                standard.choices = [{
+                    index: 0,
+                    delta: {
+                        content: candidate.content?.parts?.[0]?.text || ''
+                    },
+                    finish_reason: candidate.finishReason?.toLowerCase() || null
+                }]
+            }
+            break
+    }
+    
+    return standard
+}
+
+/**
+ * 从标准格式转换为目标流式格式
+ * @param {object} standard - 标准格式数据块
+ * @param {string} targetFormat - 目标格式
+ * @returns {object} - 目标格式数据块
+ */
+function streamChunkFromStandardFormat(standard, targetFormat) {
+    switch (targetFormat) {
+        case 'openai':
+        case 'openrouter':
+            return standard
+            
+        case 'claude':
+            const choice = standard.choices[0]
+            if (choice?.delta?.content) {
+                return {
+                    type: 'content_block_delta',
+                    index: 0,
+                    delta: {
+                        type: 'text_delta',
+                        text: choice.delta.content
+                    }
+                }
+            } else if (choice?.finish_reason) {
+                return {
+                    type: 'message_stop'
+                }
+            }
+            break
+            
+        case 'gemini':
+            const geminiChoice = standard.choices[0]
+            if (geminiChoice?.delta?.content) {
+                return {
+                    candidates: [{
+                        content: {
+                            parts: [{
+                                text: geminiChoice.delta.content
+                            }],
+                            role: 'model'
+                        },
+                        finishReason: geminiChoice.finish_reason?.toUpperCase() || null,
+                        index: 0
+                    }]
+                }
+            }
+            break
+    }
+    
+    return standard
 }

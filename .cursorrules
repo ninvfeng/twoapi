@@ -1,0 +1,136 @@
+# TwoAPI - AI API 格式转换服务
+
+这是一个基于 Cloudflare Workers 的 AI API 格式转换服务，支持多个平台和格式之间的转换。
+
+## 项目结构
+
+- `worker.js` - 主要的 Cloudflare Worker 代码
+- `wrangler.toml` - Cloudflare Workers 配置文件
+- `test/` - 测试脚本目录
+- `README.md` - 项目文档
+
+## 技术栈
+
+- **运行时**: Cloudflare Workers
+- **语言**: JavaScript (ES6+)
+- **部署工具**: Wrangler
+- **API风格**: RESTful API
+
+## 支持的平台和格式
+
+**平台**: `openai`, `claude`, `gemini`, `openrouter`, `groq`
+**格式**: `openai`, `claude`, `gemini`
+
+## 开发规范
+
+### 代码风格
+- 使用 ES6+ 语法
+- 使用 async/await 处理异步操作
+- 函数命名使用 camelCase
+- 常量使用 UPPER_CASE
+- 保持代码简洁和可读性
+
+### API 设计
+- 路由格式: `POST /{platform}/{client_format}`
+- 统一的错误处理格式
+- 支持流式响应 (Server-Sent Events)
+- 正确的 HTTP 状态码
+
+### 错误处理
+- 使用标准的 HTTP 状态码
+- 返回结构化的错误信息
+- 记录详细的错误日志
+
+## 测试
+
+### 本地开发
+```bash
+wrangler dev
+```
+服务运行在 `localhost:8787`
+
+### 测试脚本
+- `test/openrouter.sh` - OpenRouter 平台测试
+- `test/openrouter_prdt.sh` - 生产环境测试
+
+### 测试命令
+```bash
+# 运行测试
+chmod +x test/openrouter.sh
+./test/openrouter.sh
+```
+
+## 部署
+
+### 开发环境
+```bash
+wrangler dev
+```
+
+### 生产环境
+```bash
+wrangler publish
+```
+
+## 配置管理
+
+### 环境变量
+- 在 `wrangler.toml` 中配置环境变量
+- 使用 Cloudflare Workers 的环境变量管理
+
+### 模型映射
+- 在 `API_FORMATS.openrouter.modelMappings` 中配置模型映射
+- 支持简单模型名到完整标识符的转换
+
+## 安全考虑
+
+- API 密钥通过 Authorization header 传递
+- 不在代码中硬编码敏感信息
+- 验证输入参数
+- 适当的 CORS 配置
+
+## 编码指南
+
+### 新增平台支持
+1. 在 `API_FORMATS` 中添加平台配置
+2. 实现相应的格式转换函数
+3. 更新文档和测试
+
+### 新增格式支持
+1. 实现格式转换函数 (`convertToXXX` 和 `convertFromXXX`)
+2. 更新 `SUPPORTED_FORMATS` 常量
+3. 添加相应的测试用例
+
+### 调试建议
+- 使用 `console.log` 进行调试
+- 检查 Cloudflare Workers 日志
+- 使用 Wrangler 的本地开发模式
+
+## 常用命令
+
+```bash
+# 启动本地开发服务器
+wrangler dev
+
+# 部署到生产环境
+wrangler publish
+
+# 查看日志
+wrangler tail
+
+# 运行测试
+./test/openrouter.sh
+```
+
+## 文件编辑建议
+
+- 编辑 `worker.js` 时，注意保持代码的模块化
+- 修改 API 配置时，确保格式转换函数的一致性
+- 添加新功能时，同时更新文档和测试
+
+## 响应格式
+
+确保所有 API 响应都符合相应平台的格式规范：
+- OpenAI 格式: 标准的 chat/completions 响应
+- Claude 格式: Anthropic API 响应格式
+- Gemini 格式: Google Generative AI 响应格式 
