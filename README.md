@@ -12,10 +12,39 @@
 ### 路由格式
 ```
 POST /{platform}/{client_format}
+POST /{platform}/{client_format}/v1/messages
+POST /{platform}/{client_format}/v1/chat/completions
 ```
 
 - `platform`: 实际调用的平台
 - `client_format`: 客户端需要的响应格式
+
+### Cache Control 支持
+
+服务参考 [claude-code-router](https://github.com/musistudio/claude-code-router) 的设计，智能处理 Claude 的 prompt caching 功能：
+
+- **默认行为**: 对所有模型移除 `cache_control` 参数，确保兼容性
+- **Claude 模型**: 当检测到 `anthropic-beta: prompt-caching-*` 请求头且模型为 Claude 时，会重新添加 `cache_control` 参数
+- **非 Claude 模型**: 完全移除 `cache_control` 参数，避免不兼容错误
+
+这种设计确保了：
+1. 非 Claude 模型不会因为 `cache_control` 参数而出错
+2. Claude 模型可以正确使用 prompt caching 功能
+3. 与 Claude Code 的完全兼容性
+
+```bash
+# Claude 模型会正确处理 cache control
+curl -X POST "https://your-worker.com/openrouter/anthropic/v1/messages" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "anthropic-beta: prompt-caching-2024-07-31" \
+  -d '{"model": "claude-sonnet-4", "messages": [...]}'
+
+# GPT 模型会自动移除 cache control，避免错误
+curl -X POST "https://your-worker.com/openrouter/anthropic/v1/messages" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "anthropic-beta: prompt-caching-2024-07-31" \
+  -d '{"model": "gpt-4", "messages": [...]}'
+```
 
 ## 使用示例
 

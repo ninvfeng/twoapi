@@ -41,6 +41,7 @@ const API_FORMATS = {
         // 模型映射配置（仅在 OpenRouter 下使用）
         modelMappings: {
             'claude-sonnet-4': 'moonshotai/kimi-k2:free',
+            'claude-opus-4-20250514': 'moonshotai/kimi-k2:free',
         },
         format: 'openai'
     },
@@ -73,7 +74,7 @@ async function handleRequest(request) {
                 headers: {
                     'Access-Control-Allow-Origin': '*',
                     'Access-Control-Allow-Methods': 'POST, OPTIONS',
-                    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept, x-api-key, x-goog-api-key',
+                    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept, x-api-key, x-goog-api-key, anthropic-version, anthropic-beta, cache-control',
                     'Access-Control-Max-Age': '86400'
                 }
             })
@@ -124,13 +125,29 @@ async function handleRequest(request) {
         const url = new URL(request.url)
         const pathParts = url.pathname.split('/').filter(Boolean)
         
-        // 解析路径: /{platform}/{client_format}
+        // 支持两种路由格式：
+        // 1. /{platform}/{client_format} - 原始格式
+        // 2. /{platform}/{client_format}/v1/messages - Claude Code 格式
+        // 3. /{platform}/{client_format}/v1/chat/completions - 其他客户端格式
         if (pathParts.length < 2) {
             return new Response('Invalid path format. Expected: /{platform}/{client_format}', { status: 400 })
         }
 
         const platform = pathParts[0].toLowerCase()
         const clientFormat = pathParts[1].toLowerCase()
+        
+        // 检查是否有额外的路径段（如 /v1/messages）
+        const hasApiPath = pathParts.length > 2
+        if (hasApiPath) {
+            // 验证API路径格式
+            const apiPath = '/' + pathParts.slice(2).join('/')
+            const validApiPaths = ['/v1/messages', '/v1/chat/completions', '/v1beta/models']
+            const isValidApiPath = validApiPaths.some(path => apiPath.startsWith(path))
+            
+            if (!isValidApiPath) {
+                return new Response(`Invalid API path: ${apiPath}. Supported paths: ${validApiPaths.join(', ')}`, { status: 404 })
+            }
+        }
 
         // 验证平台是否支持
         if (!API_FORMATS[platform]) {
@@ -159,16 +176,30 @@ async function handleRequest(request) {
 
         // 如果平台格式和客户端格式相同，直接转发
         if (platformFormat === clientFormat) {
+            // 对于 OpenRouter 平台，即使格式相同也需要处理 cache_control
+            let finalRequestBody = requestBody
+            if (platform === 'openrouter') {
+                // 清理所有消息中的 cache_control（无论是否为 Claude 模型）
+                finalRequestBody = { ...requestBody }
+                finalRequestBody.messages = removeCacheControlFromMessages(finalRequestBody.messages)
+                
+                // 只有 Claude 模型且有 anthropic-beta 请求头时才添加 cache_control
+                const anthropicBeta = request.headers.get('anthropic-beta')
+                if (anthropicBeta && anthropicBeta.includes('prompt-caching') && isClaudeModel(requestBody.model)) {
+                    finalRequestBody.messages = addCacheControlToMessages(finalRequestBody.messages)
+                }
+            }
+            
             // 直接转发请求到目标平台
             const targetConfig = API_FORMATS[platform]
-            const targetUrl = buildTargetUrl(targetConfig, requestBody.model, platformFormat)
-            const targetHeaders = buildTargetHeaders(targetConfig, authToken, platformFormat)
+            const targetUrl = buildTargetUrl(targetConfig, finalRequestBody.model, platformFormat)
+            const targetHeaders = buildTargetHeaders(targetConfig, authToken, platformFormat, request)
             
             // 发送请求到目标平台
             const response = await fetch(targetUrl, {
                 method: 'POST',
                 headers: targetHeaders,
-                body: JSON.stringify(requestBody)
+                body: JSON.stringify(finalRequestBody)
             })
 
             if (!response.ok) {
@@ -207,7 +238,7 @@ async function handleRequest(request) {
 
         // 需要格式转换
         // 1. 将客户端格式转换为平台格式
-        const convertedRequest = convertRequest(requestBody, clientFormat, platformFormat)
+        const convertedRequest = convertRequest(requestBody, clientFormat, platformFormat, request, platform)
         
         // 2. 应用模型映射（如果平台支持）
         const mappedRequest = applyModelMapping(convertedRequest, platform)
@@ -215,7 +246,7 @@ async function handleRequest(request) {
         // 3. 构建目标API请求
         const targetConfig = API_FORMATS[platform]
         const targetUrl = buildTargetUrl(targetConfig, mappedRequest.model, platformFormat)
-        const targetHeaders = buildTargetHeaders(targetConfig, authToken, platformFormat)
+        const targetHeaders = buildTargetHeaders(targetConfig, authToken, platformFormat, request)
 
         // 4. 发送请求到目标API
         const response = await fetch(targetUrl, {
@@ -331,9 +362,10 @@ function buildTargetUrl(config, model, format) {
  * @param {object} config - API配置
  * @param {string} token - 认证令牌
  * @param {string} format - API格式
+ * @param {Request} originalRequest - 原始请求对象，用于获取额外的请求头
  * @returns {object} - 请求头
  */
-function buildTargetHeaders(config, token, format) {
+function buildTargetHeaders(config, token, format, originalRequest = null) {
     const headers = {}
     
     for (const [key, value] of Object.entries(config.headers)) {
@@ -354,6 +386,19 @@ function buildTargetHeaders(config, token, format) {
         }
     }
     
+    // 对于 Anthropic 格式，添加额外的请求头支持
+    if (format === 'anthropic' && originalRequest) {
+        const anthropicBeta = originalRequest.headers.get('anthropic-beta')
+        if (anthropicBeta) {
+            headers['anthropic-beta'] = anthropicBeta
+        }
+        
+        const cacheControl = originalRequest.headers.get('cache-control')
+        if (cacheControl) {
+            headers['cache-control'] = cacheControl
+        }
+    }
+    
     return headers
 }
 
@@ -362,14 +407,16 @@ function buildTargetHeaders(config, token, format) {
  * @param {object} requestBody - 原始请求体
  * @param {string} sourceFormat - 源格式
  * @param {string} targetFormat - 目标格式
+ * @param {Request} originalRequest - 原始请求对象
+ * @param {string} platform - 目标平台
  * @returns {object} - 转换后的请求体
  */
-function convertRequest(requestBody, sourceFormat, targetFormat) {
+function convertRequest(requestBody, sourceFormat, targetFormat, originalRequest = null, platform = null) {
     // 首先统一转换为标准格式
     const standardRequest = toStandardFormat(requestBody, sourceFormat)
     
     // 然后从标准格式转换为目标格式
-    return fromStandardFormat(standardRequest, targetFormat)
+    return fromStandardFormat(standardRequest, targetFormat, originalRequest, platform)
 }
 
 /**
@@ -432,22 +479,51 @@ function toStandardFormat(request, sourceFormat) {
 }
 
 /**
+ * 检查是否为 Claude 模型
+ * @param {string} model - 模型名称
+ * @returns {boolean} - 是否为 Claude 模型
+ */
+function isClaudeModel(model) {
+    if (!model) return false
+    const modelLower = model.toLowerCase()
+    return modelLower.includes('claude') || modelLower.includes('anthropic')
+}
+
+/**
  * 从标准格式转换为目标格式
  * @param {object} standard - 标准格式请求
  * @param {string} targetFormat - 目标格式
+ * @param {Request} originalRequest - 原始请求对象，用于获取额外信息
+ * @param {string} platform - 目标平台
  * @returns {object} - 目标格式请求
  */
-function fromStandardFormat(standard, targetFormat) {
+function fromStandardFormat(standard, targetFormat, originalRequest = null, platform = null) {
     switch (targetFormat) {
         case 'openai':
         case 'openrouter':
-            return {
+            const openaiRequest = {
                 model: standard.model,
                 messages: standard.messages,
                 max_tokens: standard.max_tokens,
                 temperature: standard.temperature,
                 stream: standard.stream
             }
+            
+            // 对于 OpenRouter 平台，根据模型类型处理 cache_control
+            if (platform === 'openrouter') {
+                // 清理所有消息中的 cache_control（无论是否为 Claude 模型）
+                openaiRequest.messages = removeCacheControlFromMessages(openaiRequest.messages)
+                
+                // 只有 Claude 模型且有 anthropic-beta 请求头时才添加 cache_control
+                if (originalRequest) {
+                    const anthropicBeta = originalRequest.headers.get('anthropic-beta')
+                    if (anthropicBeta && anthropicBeta.includes('prompt-caching') && isClaudeModel(standard.model)) {
+                        openaiRequest.messages = addCacheControlToMessages(openaiRequest.messages)
+                    }
+                }
+            }
+            
+            return openaiRequest
 
         case 'anthropic':
             const anthropicRequest = {
@@ -489,6 +565,96 @@ function fromStandardFormat(standard, targetFormat) {
         default:
             return standard
     }
+}
+
+/**
+ * 为消息添加 cache_control 支持
+ * @param {Array} messages - 消息数组
+ * @returns {Array} - 添加了 cache_control 的消息数组
+ */
+function addCacheControlToMessages(messages) {
+    if (!messages || messages.length === 0) {
+        return messages
+    }
+    
+    // 复制消息数组
+    const modifiedMessages = [...messages]
+    
+    // 为最后一条用户消息添加 cache_control
+    for (let i = modifiedMessages.length - 1; i >= 0; i--) {
+        const message = modifiedMessages[i]
+        if (message.role === 'user') {
+            // 如果内容是字符串，转换为数组格式
+            if (typeof message.content === 'string') {
+                modifiedMessages[i] = {
+                    ...message,
+                    content: [
+                        {
+                            type: 'text',
+                            text: message.content,
+                            cache_control: {
+                                type: 'ephemeral'
+                            }
+                        }
+                    ]
+                }
+            } else if (Array.isArray(message.content)) {
+                // 如果内容是数组，为最后一个文本部分添加 cache_control
+                const content = [...message.content]
+                const lastTextIndex = content.length - 1
+                if (lastTextIndex >= 0 && content[lastTextIndex].type === 'text') {
+                    content[lastTextIndex] = {
+                        ...content[lastTextIndex],
+                        cache_control: {
+                            type: 'ephemeral'
+                        }
+                    }
+                }
+                modifiedMessages[i] = {
+                    ...message,
+                    content: content
+                }
+            }
+            break
+        }
+    }
+    
+    return modifiedMessages
+}
+
+/**
+ * 移除消息中的 cache_control
+ * @param {Array} messages - 消息数组
+ * @returns {Array} - 移除了 cache_control 的消息数组
+ */
+function removeCacheControlFromMessages(messages) {
+    if (!messages || messages.length === 0) {
+        return messages
+    }
+    
+    return messages.map(message => {
+        // 如果 content 是字符串，直接返回
+        if (typeof message.content === 'string') {
+            return message
+        }
+        
+        // 如果 content 是数组，处理每个部分
+        if (Array.isArray(message.content)) {
+            const cleanContent = message.content.map(part => {
+                // 创建一个新对象，排除 cache_control 属性
+                const { cache_control, ...cleanPart } = part
+                return cleanPart
+            })
+            
+            return {
+                ...message,
+                content: cleanContent
+            }
+        }
+        
+        // 其他情况直接返回
+        return message
+    })
 }
 
 /**
