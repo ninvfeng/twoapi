@@ -54,7 +54,8 @@ const API_FORMATS = {
         endpoint: '/openai/v1/chat/completions',
         // 模型映射配置
         modelMappings: {
-            'claude-sonnet-4': 'moonshotai/kimi-k2-instruct'
+            'claude-sonnet-4': 'moonshotai/kimi-k2-instruct',
+            'claude-opus-4-20250514': 'moonshotai/kimi-k2-instruct'
         },
         format: 'openai'
     }
