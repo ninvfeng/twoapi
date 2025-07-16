@@ -51,6 +51,10 @@ const API_FORMATS = {
             'Content-Type': 'application/json'
         },
         endpoint: '/openai/v1/chat/completions',
+        // 模型映射配置
+        modelMappings: {
+            'claude-sonnet-4': 'moonshotai/kimi-k2-instruct'
+        },
         format: 'openai'
     }
 }
@@ -294,7 +298,12 @@ function buildTargetHeaders(config, token, format) {
     
     for (const [key, value] of Object.entries(config.headers)) {
         if (value === '{token}') {
-            headers[key] = token
+            // 检查是否是 Authorization 头，如果是则添加 Bearer 前缀
+            if (key === 'Authorization') {
+                headers[key] = `Bearer ${token}`
+            } else {
+                headers[key] = token
+            }
         } else if (format === 'gemini' && key === 'x-goog-api-key') {
             headers[key] = token
         } else {
