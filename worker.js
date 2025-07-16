@@ -10,7 +10,8 @@ const API_FORMATS = {
             'Authorization': 'Bearer {token}',
             'Content-Type': 'application/json'
         },
-        endpoint: '/v1/chat/completions'
+        endpoint: '/v1/chat/completions',
+        format: 'openai'
     },
     claude: {
         baseUrl: 'https://api.anthropic.com',
@@ -19,14 +20,16 @@ const API_FORMATS = {
             'anthropic-version': '2023-06-01',
             'Content-Type': 'application/json'
         },
-        endpoint: '/v1/messages'
+        endpoint: '/v1/messages',
+        format: 'claude'
     },
     gemini: {
         baseUrl: 'https://generativelanguage.googleapis.com',
         headers: {
             'Content-Type': 'application/json'
         },
-        endpoint: '/v1beta/models/{model}:generateContent'
+        endpoint: '/v1beta/models/{model}:generateContent',
+        format: 'gemini'
     },
     openrouter: {
         baseUrl: 'https://openrouter.ai/api',
@@ -37,28 +40,18 @@ const API_FORMATS = {
         endpoint: '/v1/chat/completions',
         // 模型映射配置（仅在 OpenRouter 下使用）
         modelMappings: {
-            // Claude 模型映射
-            'claude-3-sonnet-20240229': 'anthropic/claude-3-sonnet-20240229',
-            'claude-3-opus-20240229': 'anthropic/claude-3-opus-20240229',
-            'claude-3-haiku-20240307': 'anthropic/claude-3-haiku-20240307',
-            'claude-3.5-sonnet-20240620': 'anthropic/claude-3.5-sonnet-20240620',
-            'claude-sonnet-4': 'anthropic/claude-sonnet-4',
-            
-            // OpenAI 模型映射
-            'gpt-4': 'openai/gpt-4',
-            'gpt-4-turbo': 'openai/gpt-4-turbo',
-            'gpt-3.5-turbo': 'openai/gpt-3.5-turbo',
-            'gpt-4o': 'openai/gpt-4o',
-            
-            // Gemini 模型映射
-            'gemini-pro': 'google/gemini-pro',
-            'gemini-pro-vision': 'google/gemini-pro-vision',
-            'gemini-1.5-pro': 'google/gemini-1.5-pro',
-            
-            // 其他模型映射
-            'llama-3-70b': 'meta-llama/llama-3-70b-instruct',
-            'llama-3-8b': 'meta-llama/llama-3-8b-instruct'
-        }
+            'claude-sonnet-4': 'moonshotai/kimi-k2:free',
+        },
+        format: 'openai'
+    },
+    groq: {
+        baseUrl: 'https://api.groq.com',
+        headers: {
+            'Authorization': 'Bearer {token}',
+            'Content-Type': 'application/json'
+        },
+        endpoint: '/openai/v1/chat/completions',
+        format: 'openai'
     }
 }
 
@@ -78,17 +71,19 @@ async function handleRequest(request) {
                         name: "API格式转换服务",
                         description: "这是一个通用的AI API格式转换服务，支持在不同AI平台之间进行API格式转换",
                         version: "1.0.0",
-                        supported_platforms: ["openai", "claude", "gemini", "openrouter"],
+                        supported_platforms: ["openai", "claude", "gemini", "openrouter", "groq"],
+                        supported_formats: ["openai", "claude", "gemini"],
                         usage: {
-                            endpoint: "/{source_platform}/{target_platform}",
+                            endpoint: "/{platform}/{client_format}",
                             method: "POST",
-                            description: "将源平台的API格式转换为目标平台的格式",
-                            example: "/openai/claude - 将OpenAI格式转换为Claude格式"
+                            description: "将客户端格式转换为平台格式，或直接转发（如果格式相同）",
+                            example: "/openai/claude - 使用OpenAI平台，返回Claude格式"
                         },
                         features: [
-                            "自动检测源API格式",
+                            "平台和格式分离设计",
+                            "自动格式转换",
                             "支持多种认证方式",
-                            "模型名称映射（OpenRouter）",
+                            "模型名称映射（部分平台）",
                             "请求和响应格式转换",
                             "跨域支持"
                         ],
@@ -111,43 +106,81 @@ async function handleRequest(request) {
         const url = new URL(request.url)
         const pathParts = url.pathname.split('/').filter(Boolean)
         
-        // 解析路径: /source_platform/target_platform
+        // 解析路径: /{platform}/{client_format}
         if (pathParts.length < 2) {
-            return new Response('Invalid path format. Expected: /source_platform/target_platform', { status: 400 })
+            return new Response('Invalid path format. Expected: /{platform}/{client_format}', { status: 400 })
         }
 
-        const sourcePlatform = pathParts[0].toLowerCase()
-        const targetPlatform = pathParts[1].toLowerCase()
+        const platform = pathParts[0].toLowerCase()
+        const clientFormat = pathParts[1].toLowerCase()
 
         // 验证平台是否支持
-        if (!API_FORMATS[sourcePlatform] || !API_FORMATS[targetPlatform]) {
-            return new Response('Unsupported API platform', { status: 400 })
+        if (!API_FORMATS[platform]) {
+            return new Response('Unsupported platform', { status: 400 })
+        }
+
+        // 验证客户端格式是否支持
+        const supportedFormats = ['openai', 'claude', 'gemini']
+        if (!supportedFormats.includes(clientFormat)) {
+            return new Response('Unsupported client format', { status: 400 })
         }
 
         // 获取请求体
         const requestBody = await request.json()
         
-        // 自动判断源格式（如果与URL中的源平台不匹配，以实际格式为准）
-        const actualSourceFormat = detectSourceFormat(requestBody, sourcePlatform)
+        // 获取平台的实际格式
+        const platformFormat = API_FORMATS[platform].format
         
         // 获取认证信息
-        const authToken = extractAuthToken(request, actualSourceFormat)
+        const authToken = extractAuthToken(request, platformFormat)
         if (!authToken) {
             return new Response('Missing authentication token', { status: 401 })
         }
 
-        // 转换请求格式
-        const convertedRequest = convertRequest(requestBody, actualSourceFormat, targetPlatform)
-        
-        // 应用模型映射（仅在目标平台是 OpenRouter 时）
-        const mappedRequest = applyModelMapping(convertedRequest, targetPlatform)
-        
-        // 构建目标API请求
-        const targetConfig = API_FORMATS[targetPlatform]
-        const targetUrl = buildTargetUrl(targetConfig, mappedRequest.model, targetPlatform)
-        const targetHeaders = buildTargetHeaders(targetConfig, authToken, targetPlatform)
+        // 如果平台格式和客户端格式相同，直接转发
+        if (platformFormat === clientFormat) {
+            // 直接转发请求到目标平台
+            const targetConfig = API_FORMATS[platform]
+            const targetUrl = buildTargetUrl(targetConfig, requestBody.model, platformFormat)
+            const targetHeaders = buildTargetHeaders(targetConfig, authToken, platformFormat)
 
-        // 发送请求到目标API
+            const response = await fetch(targetUrl, {
+                method: 'POST',
+                headers: targetHeaders,
+                body: JSON.stringify(requestBody)
+            })
+
+            if (!response.ok) {
+                const errorText = await response.text()
+                return new Response(`Platform API Error: ${errorText}`, { 
+                    status: response.status 
+                })
+            }
+
+            const responseData = await response.json()
+            
+            return new Response(JSON.stringify(responseData), {
+                status: 200,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                }
+            })
+        }
+
+        // 需要格式转换
+        // 1. 将客户端格式转换为平台格式
+        const convertedRequest = convertRequest(requestBody, clientFormat, platformFormat)
+        
+        // 2. 应用模型映射（如果平台支持）
+        const mappedRequest = applyModelMapping(convertedRequest, platform)
+        
+        // 3. 构建目标API请求
+        const targetConfig = API_FORMATS[platform]
+        const targetUrl = buildTargetUrl(targetConfig, mappedRequest.model, platformFormat)
+        const targetHeaders = buildTargetHeaders(targetConfig, authToken, platformFormat)
+
+        // 4. 发送请求到目标API
         const response = await fetch(targetUrl, {
             method: 'POST',
             headers: targetHeaders,
@@ -156,14 +189,14 @@ async function handleRequest(request) {
 
         if (!response.ok) {
             const errorText = await response.text()
-            return new Response(`Target API Error: ${errorText}`, { 
+            return new Response(`Platform API Error: ${errorText}`, { 
                 status: response.status 
             })
         }
 
-        // 转换响应格式
+        // 5. 转换响应格式
         const responseData = await response.json()
-        const convertedResponse = convertResponse(responseData, targetPlatform, actualSourceFormat)
+        const convertedResponse = convertResponse(responseData, platformFormat, clientFormat)
 
         return new Response(JSON.stringify(convertedResponse), {
             status: 200,
@@ -179,46 +212,20 @@ async function handleRequest(request) {
 }
 
 /**
- * 自动检测源格式
- * @param {object} requestBody - 请求体
- * @param {string} platformHint - 平台提示
- * @returns {string} - 检测到的源格式
- */
-function detectSourceFormat(requestBody, platformHint) {
-    // 检测 Gemini 格式
-    if (requestBody.contents && Array.isArray(requestBody.contents)) {
-        return 'gemini'
-    }
-    
-    // 检测 Claude 格式
-    if (requestBody.system || (requestBody.messages && !requestBody.model)) {
-        return 'claude'
-    }
-    
-    // 检测 OpenAI 格式
-    if (requestBody.messages && requestBody.model) {
-        return 'openai'
-    }
-    
-    // 如果无法自动检测，使用平台提示
-    return platformHint
-}
-
-/**
- * 应用模型映射（仅在目标平台是 OpenRouter 时）
+ * 应用模型映射（如果平台支持）
  * @param {object} request - 请求对象
- * @param {string} targetPlatform - 目标平台
+ * @param {string} platform - 目标平台
  * @returns {object} - 应用映射后的请求
  */
-function applyModelMapping(request, targetPlatform) {
+function applyModelMapping(request, platform) {
     const mappedRequest = { ...request }
     
-    // 获取目标平台的配置
-    const targetConfig = API_FORMATS[targetPlatform]
+    // 获取平台的配置
+    const platformConfig = API_FORMATS[platform]
     
-    // 只有当目标平台有模型映射配置且请求中有模型时才应用映射
-    if (targetConfig && targetConfig.modelMappings && request.model) {
-        const mappedModel = targetConfig.modelMappings[request.model]
+    // 只有当平台有模型映射配置且请求中有模型时才应用映射
+    if (platformConfig && platformConfig.modelMappings && request.model) {
+        const mappedModel = platformConfig.modelMappings[request.model]
         if (mappedModel) {
             mappedRequest.model = mappedModel
         }
@@ -230,10 +237,10 @@ function applyModelMapping(request, targetPlatform) {
 /**
  * 提取认证令牌
  * @param {Request} request - 请求对象
- * @param {string} sourceFormat - 源格式
+ * @param {string} platformFormat - 平台格式
  * @returns {string|null} - 认证令牌
  */
-function extractAuthToken(request, sourceFormat) {
+function extractAuthToken(request, platformFormat) {
     // 尝试多种认证方式
     const authHeader = request.headers.get('Authorization')
     const apiKey = request.headers.get('x-api-key')
